@@ -1,0 +1,26 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: Basic CloudFormation Template
+
+Resources:
+    MyVPC:
+        Type: 'AWS::EC2::VPC'
+        Properties:
+            CidrBlock: '10.0.3.0/26'
+            EnableDnsHostnames: true
+            EnableDnsSupport: true
+            Tags:
+                - Key: Name
+                  Value: 'MyJuiceShop-VPC'
+    MyInternetGateway:
+        Type: 'AWS::EC2::InternetGateway'
+        Properties:
+            Tags:
+                - Key: Name
+                  Value: Juiceshop-IG
+
+    MyVPCGatewayAttachment:
+        Type: 'AWS::EC2::VPCGatewayAttachment'
+        Properties:
+            VpcId: !Ref MyVPC
+            InternetGatewayId: !Ref MyInternetGateway
+
