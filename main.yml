@@ -3,51 +3,51 @@ Description: Basic CloudFormation Template
 
 Resources:
     MyVPC:
-        Type: 'AWS::EC2::VPC'
+        Type: AWS::EC2::VPC
         Properties:
-            CidrBlock: '10.0.3.0/26'
+            CidrBlock: 10.0.3.0/26
             EnableDnsHostnames: true
             EnableDnsSupport: true
             Tags:
                 - Key: Name
-                  Value: 'MyJuiceShop-VPC'
+                  Value: MyJuiceShop-VPC
     MyInternetGateway:
-        Type: 'AWS::EC2::InternetGateway'
+        Type: AWS::EC2::InternetGateway
         Properties:
             Tags:
                 - Key: Name
                   Value: Juiceshop-IG
 
     MyVPCGatewayAttachment:
-        Type: 'AWS::EC2::VPCGatewayAttachment'
+        Type: AWS::EC2::VPCGatewayAttachment
         Properties:
             VpcId: !Ref MyVPC
             InternetGatewayId: !Ref MyInternetGateway
 
     MyVPCSubnet1:
-        Type: 'AWS::EC2::Subnet'
+        Type: AWS::EC2::Subnet
         Properties:
             VpcId: !Ref MyVPC
-            CidrBlock: '10.0.3.0/28'
-            AvailabilityZone: 'us-east-1a'
+            CidrBlock: 10.0.3.0/28
+            AvailabilityZone: us-east-1a
             MapPublicIpOnLaunch: true
             Tags:
                 - Key: Name
                   Value: Subnet1
     
     MyVPCSubnet2:
-        Type: 'AWS::EC2::Subnet'
+        Type: AWS::EC2::Subnet
         Properties:
             VpcId: !Ref MyVPC
-            CidrBlock: '10.0.3.16/28'
-            AvailabilityZone: 'us-east-1b'
+            CidrBlock: 10.0.3.16/28
+            AvailabilityZone: us-east-1b
             MapPublicIpOnLaunch: true
             Tags:
                 - Key: Name
                   Value: Subnet2
 
     MyRouteTable:
-        Type: 'AWS::EC2::RouteTable'
+        Type: AWS::EC2::RouteTable
         Properties:
             VpcId: !Ref MyVPC 
             Tags: 
@@ -55,8 +55,22 @@ Resources:
                   Value: MyRouteTable
 
     MyInternetRoute:
-        Type: 'AWS::EC2::Route'
+        Type: AWS::EC2::Route
         Properties:
             RouteTableId: !Ref MyRouteTable
             DestinationCidrBlock: 0.0.0.0/0
             GatewayId: !Ref MyInternetGateway
+
+
+    MySubnetAssociation1:
+        Type: AWS::EC2::SubnetRouteTableAssociation
+        Properties:
+            RouteTableId: !Ref MyRouteTable
+            SubnetId: !Ref MyVPCSubnet1
+
+    MySubnetAssociation2:
+        Type: AWS::EC2::SubnetRouteTableAssociation
+        Properties:
+            RouteTableId: !Ref MyRouteTable
+            SubnetId: !Ref MyVPCSubnet2
+
