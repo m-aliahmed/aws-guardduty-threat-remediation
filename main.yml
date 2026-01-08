@@ -74,3 +74,38 @@ Resources:
             RouteTableId: !Ref MyRouteTable
             SubnetId: !Ref MyVPCSubnet2
 
+
+    MyLbSecurityGroup:
+        Type: AWS::EC2::SecurityGroup
+        Properties:
+            GroupDescription: Allow HTTP and HTTPS from everywhere
+            VpcId: !Ref MyVPC
+            SecurityGroupIngress:
+                - IpProtocol: tcp
+                  FromPort: 80
+                  ToPort: 80
+                  CidrIp: 0.0.0.0/0
+                - IpProtocol: tcp
+                  FromPort: 443
+                  ToPort: 443
+                  CidrIp: 0.0.0.0/0
+                  
+                      
+    MyServerSecurityGroup:
+        Type: AWS::EC2::SecurityGroup
+        Properties:
+            GroupDescription: Allow HTTP and HTTPS from Load Balancer
+            VpcId: !Ref MyVPC
+            SecurityGroupIngress:
+                - IpProtocol: tcp
+                  FromPort: 80
+                  ToPort: 80
+                  SourceSecurityGroupId: !Ref MyLbSecurityGroup
+                
+                - IpProtocol: tcp
+                  FromPort: 443
+                  ToPort: 443
+                  SourceSecurityGroupId: !Ref MyLbSecurityGroup
+
+
+
