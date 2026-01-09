@@ -156,10 +156,38 @@ Resources:
 
 
     
+    MyinstanceTargetgroup:
+        Type: AWS::ElasticLoadBalancingV2::TargetGroup
+        Properties:
+            Port: 80
+            Protocol: HTTP
+            VpcId: !Ref MyVPC
+            TargetType: instance
+            HealthCheckPath: /
+    
+    MyLoadBalancer:
+        Type: AWS::ElasticLoadBalancingV2::LoadBalancer
+        Properties:
+            Scheme: internet-facing
+            Subnets:
+                - !Ref MyVPCSubnet1
+                - !Ref MyVPCSubnet2
+            SecurityGroups: 
+                - !Ref MyLbSecurityGroup
+
+    MyListner:
+        Type: AWS::ElasticLoadBalancingV2::Listener
+        Properties:
+            LoadBalancerArn: !Ref MyLoadBalancer
+            DefaultActions: 
+                - Type: forward
+                  TargetGroupArn: !Ref MyinstanceTargetgroup
+            Port: 80
+            Protocol: HTTP
 
     
 
-
-
-
-
+Outputs:
+    LoadBalancerDNS:
+        Description: the URL of the Load Balancer
+        Value: !GetAtt MyLoadBalancer.DNSName
