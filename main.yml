@@ -1,0 +1,165 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: Basic CloudFormation Template
+
+Resources:
+    MyVPC:
+        Type: AWS::EC2::VPC
+        Properties:
+            CidrBlock: 10.0.3.0/26
+            EnableDnsHostnames: true
+            EnableDnsSupport: true
+            Tags:
+                - Key: Name
+                  Value: MyJuiceShop-VPC
+    MyInternetGateway:
+        Type: AWS::EC2::InternetGateway
+        Properties:
+            Tags:
+                - Key: Name
+                  Value: Juiceshop-IG
+
+    MyVPCGatewayAttachment:
+        Type: AWS::EC2::VPCGatewayAttachment
+        Properties:
+            VpcId: !Ref MyVPC
+            InternetGatewayId: !Ref MyInternetGateway
+
+    MyVPCSubnet1:
+        Type: AWS::EC2::Subnet
+        Properties:
+            VpcId: !Ref MyVPC
+            CidrBlock: 10.0.3.0/28
+            AvailabilityZone: us-east-1a
+            MapPublicIpOnLaunch: true
+            Tags:
+                - Key: Name
+                  Value: Subnet1
+    
+    MyVPCSubnet2:
+        Type: AWS::EC2::Subnet
+        Properties:
+            VpcId: !Ref MyVPC
+            CidrBlock: 10.0.3.16/28
+            AvailabilityZone: us-east-1b
+            MapPublicIpOnLaunch: true
+            Tags:
+                - Key: Name
+                  Value: Subnet2
+
+    MyRouteTable:
+        Type: AWS::EC2::RouteTable
+        Properties:
+            VpcId: !Ref MyVPC 
+            Tags: 
+                - Key: Name
+                  Value: MyRouteTable
+
+    MyInternetRoute:
+        Type: AWS::EC2::Route
+        Properties:
+            RouteTableId: !Ref MyRouteTable
+            DestinationCidrBlock: 0.0.0.0/0
+            GatewayId: !Ref MyInternetGateway
+
+
+    MySubnetAssociation1:
+        Type: AWS::EC2::SubnetRouteTableAssociation
+        Properties:
+            RouteTableId: !Ref MyRouteTable
+            SubnetId: !Ref MyVPCSubnet1
+
+    MySubnetAssociation2:
+        Type: AWS::EC2::SubnetRouteTableAssociation
+        Properties:
+            RouteTableId: !Ref MyRouteTable
+            SubnetId: !Ref MyVPCSubnet2
+
+
+    MyLbSecurityGroup:
+        Type: AWS::EC2::SecurityGroup
+        Properties:
+            GroupDescription: Allow HTTP and HTTPS from everywhere
+            VpcId: !Ref MyVPC
+            SecurityGroupIngress:
+                - IpProtocol: tcp
+                  FromPort: 80
+                  ToPort: 80
+                  CidrIp: 0.0.0.0/0
+                - IpProtocol: tcp
+                  FromPort: 443
+                  ToPort: 443
+                  CidrIp: 0.0.0.0/0
+                  
+                      
+    MyServerSecurityGroup:
+        Type: AWS::EC2::SecurityGroup
+        Properties:
+            GroupDescription: Allow HTTP and HTTPS from Load Balancer
+            VpcId: !Ref MyVPC
+            SecurityGroupIngress:
+                - IpProtocol: tcp
+                  FromPort: 80
+                  ToPort: 80
+                  SourceSecurityGroupId: !Ref MyLbSecurityGroup
+                
+                - IpProtocol: tcp
+                  FromPort: 443
+                  ToPort: 443
+                  SourceSecurityGroupId: !Ref MyLbSecurityGroup
+
+
+
+    
+    MyS3Bucket:
+        Type: AWS::S3::Bucket
+        Properties:
+            BucketEncryption:
+                ServerSideEncryptionConfiguration:
+                    - ServerSideEncryptionByDefault:
+                        SSEAlgorithm: AES256
+            PublicAccessBlockConfiguration:
+                BlockPublicAcls: true
+                BlockPublicPolicy: true
+                IgnorePublicAcls: true
+                RestrictPublicBuckets: true
+            
+
+    MyVulnerableRole:
+        Type: AWS::IAM::Role
+        Properties:
+            AssumeRolePolicyDocument:
+                Version: "2012-10-17"
+                Statement:
+                    - Effect: Allow
+                      Principal:
+                        Service: "ec2.amazonaws.com"
+                      Action: 'sts:AssumeRole'
+            Policies:
+                - PolicyName: S3policy
+                  PolicyDocument:
+                      Version: "2012-10-17"
+                      Statement:
+                        - Effect: Allow
+                          Action:
+                            - s3:GetObject
+                            - s3:ListBucket
+                          Resource: 
+                            - !GetAtt MyS3Bucket.Arn
+                            - !Sub ${MyS3Bucket.Arn}/*
+
+
+    MyInstanceProfile:
+        Type: AWS::IAM::InstanceProfile
+        Properties:
+            Roles:
+                - !Ref MyVulnerableRole
+
+
+    
+
+    
+
+
+
+
+
