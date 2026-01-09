@@ -65,7 +65,7 @@ Resources:
         Properties:
             VpcId: !Ref MyVPC
             CidrBlock: 10.0.3.16/28
-            AvailabilityZone: us-east-1b
+            AvailabilityZone: !Select [ 1, !GetAZs '' ]
             MapPublicIpOnLaunch: true
             Tags:
                 - Key: Name
@@ -215,7 +215,7 @@ Resources:
         Properties:
             LaunchTemplateName: MyJuiceShop-template
             LaunchTemplateData:
-                ImageId:  
+                ImageId:  resolve:ssm:/aws/service/canonical/ubuntu/server/22.04/stable/current/amd64/hvm/ebs-gp2/ami-id
                 InstanceType: !Ref InstanceType
                 KeyName: !Ref KeyName
                 SecurityGroupIds:
