@@ -175,7 +175,7 @@ Resources:
             SecurityGroups: 
                 - !Ref MyLbSecurityGroup
 
-    MyListner:
+    MyListener:
         Type: AWS::ElasticLoadBalancingV2::Listener
         Properties:
             LoadBalancerArn: !Ref MyLoadBalancer
@@ -185,9 +185,48 @@ Resources:
             Port: 80
             Protocol: HTTP
 
-    
+    MyLaunchTemplate:
+        Type: AWS::EC2::LaunchTemplate
+        Properties:
+            LaunchTemplateName: MyJuiceShop-template
+            LaunchTemplateData:
+                ImageId:  ami-0c7217cdde317cfec
+                InstanceType: t3.micro
+                KeyName: Ali-key
+                SecurityGroupIds:
+                    - !Ref MyServerSecurityGroup
+                IamInstanceProfile: 
+                    Name: !Ref MyInstanceProfile
+                UserData: 
+                    Fn::Base64: !Sub | 
+                        #!/bin/bash
+                        yum update -y
+                        yum install -y docker
+                        systemctl start docker
+                        systemctl enable docker                        
+                        docker run -d -p 80:3000 --restart always --name juice-shop bkimminich/juice-shop
+
+
+
+    MyAutoScalingGroup:
+        Type: AWS::AutoScaling::AutoScalingGroup
+        Properties:
+            MinSize: 1
+            MaxSize: 3
+            LaunchTemplate: !GetAtt MyLaunchTemplate.LatestVersionNumber
+            HealthCheckType: ELB
+            TargetGroupARNs:
+                - !Ref MyinstanceTargetgroup
+            VPCZoneIdentifier:
+                - !Ref MyVPCSubnet1
+                - !Ref MyVPCSubnet2
+
+
+
+
 
 Outputs:
     LoadBalancerDNS:
         Description: the URL of the Load Balancer
         Value: !GetAtt MyLoadBalancer.DNSName
+
