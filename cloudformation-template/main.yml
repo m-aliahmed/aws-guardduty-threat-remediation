@@ -1,6 +1,30 @@
 AWSTemplateFormatVersion: '2010-09-09'
 Description: Basic CloudFormation Template
 
+Parameters:
+    EnvironmentName:
+        Type: String
+        Default: JuiceShop
+        Description: A Vunrelible Web Application for Security Training
+    
+    InstanceType:
+        Type: String
+        Default: t3.micro
+        Description: EC2 Instance Type
+        AllowedValues:
+            - t2.nano
+            - t3.micro
+            - t3a.micro
+            - t4g.micro
+        ConstraintDescription: must be a valid EC2 instance type.
+    
+    KeyName:
+        Type: AWS::EC2::KeyPair::KeyName
+        Description: Name of an existing EC2 KeyPair to enable SSH access to the instances
+    
+
+    
+
 Resources:
     MyVPC:
         Type: AWS::EC2::VPC
@@ -29,7 +53,8 @@ Resources:
         Properties:
             VpcId: !Ref MyVPC
             CidrBlock: 10.0.3.0/28
-            AvailabilityZone: us-east-1a
+            AvailabilityZone: !Select [ 0, !GetAZs '' ]
+
             MapPublicIpOnLaunch: true
             Tags:
                 - Key: Name
@@ -190,9 +215,9 @@ Resources:
         Properties:
             LaunchTemplateName: MyJuiceShop-template
             LaunchTemplateData:
-                ImageId:  ami-0ecb62995f68bb549
-                InstanceType: t3.micro
-                KeyName: Ali-key
+                ImageId:  
+                InstanceType: !Ref InstanceType
+                KeyName: !Ref KeyName
                 SecurityGroupIds:
                     - !Ref MyServerSecurityGroup
                 IamInstanceProfile: 
