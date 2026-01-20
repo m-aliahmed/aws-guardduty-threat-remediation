@@ -34,20 +34,20 @@ Resources:
             EnableDnsSupport: true
             Tags:
                 - Key: Name
-                  Value: MyJuiceShop-VPC
+                  Value: !Sub ${EnvironmentName}-VPC
     MyInternetGateway:
         Type: AWS::EC2::InternetGateway
         Properties:
             Tags:
                 - Key: Name
-                  Value: Juiceshop-IG
+                  Value: !Sub ${EnvironmentName}-IG
 
     MyVPCGatewayAttachment:
         Type: AWS::EC2::VPCGatewayAttachment
         Properties:
             VpcId: !Ref MyVPC
             InternetGatewayId: !Ref MyInternetGateway
-
+            
     MyVPCSubnet1:
         Type: AWS::EC2::Subnet
         Properties:
@@ -58,7 +58,7 @@ Resources:
             MapPublicIpOnLaunch: true
             Tags:
                 - Key: Name
-                  Value: Subnet1
+                  Value: !Sub ${EnvironmentName}-Subnet1
     
     MyVPCSubnet2:
         Type: AWS::EC2::Subnet
@@ -69,7 +69,7 @@ Resources:
             MapPublicIpOnLaunch: true
             Tags:
                 - Key: Name
-                  Value: Subnet2
+                  Value: !Sub ${EnvironmentName}-Subnet2
 
     MyRouteTable:
         Type: AWS::EC2::RouteTable
@@ -77,7 +77,7 @@ Resources:
             VpcId: !Ref MyVPC 
             Tags: 
                 - Key: Name
-                  Value: MyRouteTable
+                  Value: !Sub ${EnvironmentName}-RouteTable
 
     MyInternetRoute:
         Type: AWS::EC2::Route
@@ -92,13 +92,12 @@ Resources:
         Properties:
             RouteTableId: !Ref MyRouteTable
             SubnetId: !Ref MyVPCSubnet1
-
+            
     MySubnetAssociation2:
         Type: AWS::EC2::SubnetRouteTableAssociation
         Properties:
             RouteTableId: !Ref MyRouteTable
             SubnetId: !Ref MyVPCSubnet2
-
 
     MyLbSecurityGroup:
         Type: AWS::EC2::SecurityGroup
@@ -114,7 +113,9 @@ Resources:
                   FromPort: 443
                   ToPort: 443
                   CidrIp: 0.0.0.0/0
-                  
+            Tags:
+                - Key: Name
+                  Value: !Sub ${EnvironmentName}-LB-SG
                       
     MyServerSecurityGroup:
         Type: AWS::EC2::SecurityGroup
@@ -132,7 +133,9 @@ Resources:
                   ToPort: 443
                   SourceSecurityGroupId: !Ref MyLbSecurityGroup
 
-
+            Tags:
+                - Key: Name
+                  Value: !Sub ${EnvironmentName}-Server-SG
 
     
     MyS3Bucket:
@@ -147,7 +150,9 @@ Resources:
                 BlockPublicPolicy: true
                 IgnorePublicAcls: true
                 RestrictPublicBuckets: true
-            
+            Tags:
+                - Key: Name
+                  Value: !Sub ${EnvironmentName}-S3-Bucket
 
     MyVulnerableRole:
         Type: AWS::IAM::Role
@@ -171,6 +176,9 @@ Resources:
                           Resource: 
                             - !GetAtt MyS3Bucket.Arn
                             - !Sub ${MyS3Bucket.Arn}/*
+            Tags:
+                - Key: Name
+                  Value: !Sub ${EnvironmentName}-Vulnerable-Role
 
 
     MyInstanceProfile:
@@ -178,7 +186,6 @@ Resources:
         Properties:
             Roles:
                 - !Ref MyVulnerableRole
-
 
     
     MyinstanceTargetgroup:
@@ -189,7 +196,9 @@ Resources:
             VpcId: !Ref MyVPC
             TargetType: instance
             HealthCheckPath: /
-    
+            Tags:
+                - Key: Name
+                  Value: !Sub ${EnvironmentName}-Target-Group
     MyLoadBalancer:
         Type: AWS::ElasticLoadBalancingV2::LoadBalancer
         Properties:
@@ -199,7 +208,9 @@ Resources:
                 - !Ref MyVPCSubnet2
             SecurityGroups: 
                 - !Ref MyLbSecurityGroup
-
+            Tags:
+                - Key: Name
+                  Value: !Sub ${EnvironmentName}-Load-Balancer
     MyListener:
         Type: AWS::ElasticLoadBalancingV2::Listener
         Properties:
@@ -209,7 +220,8 @@ Resources:
                   TargetGroupArn: !Ref MyinstanceTargetgroup
             Port: 80
             Protocol: HTTP
-
+           
+           
     MyLaunchTemplate:
         Type: AWS::EC2::LaunchTemplate
         Properties:
@@ -236,8 +248,7 @@ Resources:
                         # Pull and run the Juice Shop container
                         # Maps Host Port 80 -> Container Port 3000
                         docker run -d -p 80:3000 --restart always --name juice-shop bkimminich/juice-shop
-
-
+            
     MyAutoScalingGroup:
         Type: AWS::AutoScaling::AutoScalingGroup
         Properties:
@@ -253,7 +264,10 @@ Resources:
             VPCZoneIdentifier:
                 - !Ref MyVPCSubnet1
                 - !Ref MyVPCSubnet2
-
+            Tags:
+                - Key: Name
+                  PropagateAtLaunch: true 
+                  Value: !Sub ${EnvironmentName}-Auto-Scaling-Group
 
 
 
