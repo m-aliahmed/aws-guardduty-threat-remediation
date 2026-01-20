@@ -12,7 +12,7 @@ Parameters:
         Default: t3.micro
         Description: EC2 Instance Type
         AllowedValues:
-            - t2.nano
+            - t3.nano
             - t3.micro
             - t3a.micro
             - t4g.micro
@@ -224,6 +224,85 @@ Resources:
            
     MyLaunchTemplate:
         Type: AWS::EC2::LaunchTemplate
+        Metadata:
+            AWS::CloudFormation::Init:
+                configSets:
+                    default:
+                        - CfnHupInstall
+                CfnHupInstall:
+                    file:
+                        /etc/cfn/cfn-hup.conf:
+                            content: !Sub |
+                                [main]
+                                stack=${AWS::StackName}
+                                region=${AWS::Region}
+                            mode: '000400'
+                            owner: root
+                            group: root
+                        /etc/cfn/hooks.d/cfn-auto-reloader.conf:
+                            content: !Sub |
+                                [cfn-auto-reloader-hook]
+                                triggers=post.update
+                                path=Resources.MyLaunchTemplate.Metadata.AWS::CloudFormation::Init
+                                action=/opt/aws/bin/cfn-init -v --stack ${AWS::StackName} --resource MyLaunchTemplate --region ${AWS::Region}
+                                runas=root
+                            mode: '000400'
+                            owner: root
+                            group: root
+                        /etc/systemd/system/cfn-hup.service:
+                            content: !Sub |
+                                [Unit]
+                                Description=CloudFormation HUP daemon
+                                After=network.target
+
+                                [Service]
+                                Type=simple
+                                ExecStart=/opt/aws/bin/cfn-hup -f /etc/cfn/cfn-hup.conf -s
+                                Restart=always
+                                RestartSec=10
+
+                                [Install]
+                                WantedBy=multi-user.target
+                           
+                        /etc/systemd/system/juice-shop.service:
+                            content: !Sub |
+                                [Unit]
+                                Description=Juice Shop Service
+                                After=network.target
+
+                                [Service]
+                                Type=simple
+                                User=juicer
+                                WorkingDirectory=/juice-shop
+                                ExecStart=/usr/bin/npm start
+                                Restart=always
+                                RestartSec=10
+
+                                [Install]
+                                WantedBy=multi-user.target
+                        /etc/nginx/sites-available/juice-shop:
+                            content: |
+                                server {
+                                    listen 80;
+                                    server_name localhost;
+
+                                    location / {
+                                        proxy_pass http://localhost:3000;
+                                        proxy_http_version 1.1;
+                                        proxy_set_header Upgrade $http_upgrade;
+                                        proxy_set_header Connection 'upgrade';
+                                        proxy_set_header Host $host;
+                                        proxy_cache_bypass $http_upgrade;
+                                    }
+                                }
+
+                        commands:
+                            01_install_cfn_hup:
+                                command: |
+                                    set -xe
+                                    systemctl enable cfn-hup
+                                    systemctl start cfn-hup
+                          
         Properties:
             LaunchTemplateName: MyJuiceShop-template
             LaunchTemplateData:
@@ -237,20 +316,44 @@ Resources:
                 UserData: 
                     Fn::Base64: !Sub | 
                         #!/bin/bash
-                        # Update and install Docker
                         apt-get update -y
-                        apt-get install -y docker.io
+                        apt-get -y purge unattended-upgrades
+                        curl -sL https://deb.nodesource.com/setup_16.x | sudo -E bash -
+                        apt-get -y install curl dirmngr apt-transport-https lsb-release ca-certificates python-setuptools awscli nodejs gcc g++ make nginx
+
+                        addgroup --system --gid 1033 juicer
+                        adduser --system --uid 1033 --gid juicer --ingroup juicer --home /home/juicer --shell /bin/bash juicer
                         
-                        # Start Docker service
-                        systemctl start docker
-                        systemctl enable docker
+                        git clone https://github.com/juice-shop/juice-shop.git /var/www/juice-shop         
+                        cd /var/www/juice-shop
                         
-                        # Pull and run the Juice Shop container
-                        # Maps Host Port 80 -> Container Port 3000
-                        docker run -d -p 80:3000 --restart always --name juice-shop bkimminich/juice-shop
-            
+                        npm install --unsafe-perm
+
+                        npm install -g pm2
+                        pm2 start app.js --name "juice-shop"
+                        pm2 save
+
+                        /opt/aws/bin/cfn-signal -e $? --stack ${AWS::StackName} --resource MyAutoScalingGroup --region ${AWS::Region}
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
     MyAutoScalingGroup:
         Type: AWS::AutoScaling::AutoScalingGroup
+        CreationPolicy:
+            ResourceSignal:
+                Timeout: PT15M
         Properties:
             MinSize: 1
             MaxSize: 3
