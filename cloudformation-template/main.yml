@@ -140,6 +140,7 @@ Resources:
     
     MyS3Bucket:
         Type: AWS::S3::Bucket
+        DeletionPolicy: Delete
         Properties:
             BucketEncryption:
                 ServerSideEncryptionConfiguration:
@@ -173,9 +174,11 @@ Resources:
                           Action:
                             - s3:GetObject
                             - s3:ListBucket
+                            - s3:PutObject
                           Resource: 
                             - !GetAtt MyS3Bucket.Arn
                             - !Sub ${MyS3Bucket.Arn}/*
+                        
             Tags:
                 - Key: Name
                   Value: !Sub ${EnvironmentName}-Vulnerable-Role
@@ -221,7 +224,53 @@ Resources:
             Port: 80
             Protocol: HTTP
            
-           
+
+    MyAutoScalingGroup:
+        Type: AWS::AutoScaling::AutoScalingGroup
+        CreationPolicy:
+            AutoScalingCreationPolicy:
+                MinSuccessfulInstancesPercent: 100
+            ResourceSignal:
+                Timeout: PT15M
+                Count: "1"
+        UpdatePolicy:
+            AutoScalingScheduledAction:
+                IgnoreUnmodifiedGroupSizeProperties: true
+            AutoScalingRollingUpdate:
+                MinInstancesInService: 1
+                MaxBatchSize: 2
+                PauseTime: PT5M
+                WaitOnResourceSignals: true
+                SuspendProcesses:
+                    - HealthCheck
+                    - ReplaceUnhealthy
+                    - AZRebalance
+                    - AlarmNotification
+                    - ScheduledActions
+        Properties:
+            Cooldown: 0
+            DefaultInstanceWarmup: 10
+            MinSize: 1
+            MaxSize: 2
+            DesiredCapacity: 1
+            LaunchTemplate: 
+                LaunchTemplateId: !Ref MyLaunchTemplate
+                Version: !GetAtt MyLaunchTemplate.LatestVersionNumber
+            HealthCheckType: ELB
+            HealthCheckGracePeriod: 300
+            TargetGroupARNs:
+                - !Ref MyinstanceTargetgroup
+            VPCZoneIdentifier:
+                - !Ref MyVPCSubnet1
+                - !Ref MyVPCSubnet2
+            
+            Tags:
+                - Key: Name
+                  PropagateAtLaunch: true 
+                  Value: !Sub ${EnvironmentName}-Auto-Scaling-Group
+
+
+ 
     MyLaunchTemplate:
         Type: AWS::EC2::LaunchTemplate
         Metadata:
@@ -230,7 +279,7 @@ Resources:
                     default:
                         - CfnHupInstall
                 CfnHupInstall:
-                    file:
+                    files:
                         /etc/cfn/cfn-hup.conf:
                             content: !Sub |
                                 [main]
@@ -296,16 +345,22 @@ Resources:
                                     }
                                 }
 
-                        commands:
-                            01_install_cfn_hup:
-                                command: |
-                                    set -xe
-                                    systemctl enable cfn-hup
-                                    systemctl start cfn-hup
+                    commands:
+                        01_install_cfn_hup:
+                            command: |
+                                set -xe
+                                systemctl enable cfn-hup.service
+                                systemctl start cfn-hup.service
                           
         Properties:
             LaunchTemplateName: MyJuiceShop-template
             LaunchTemplateData:
+                BlockDeviceMappings:
+                    - DeviceName: /dev/xvda
+                      Ebs:
+                        VolumeSize: 20
+                        VolumeType: gp3
+                        DeleteOnTermination: true
                 ImageId:  resolve:ssm:/aws/service/canonical/ubuntu/server/22.04/stable/current/amd64/hvm/ebs-gp2/ami-id
                 InstanceType: !Ref InstanceType
                 KeyName: !Ref KeyName
@@ -313,72 +368,76 @@ Resources:
                     - !Ref MyServerSecurityGroup
                 IamInstanceProfile: 
                     Name: !Ref MyInstanceProfile
+                
                 UserData: 
                     Fn::Base64: !Sub | 
                         #!/bin/bash -xe
+                        
+                        # TRAP: If this script crashes, signal FAILURE immediately (don't wait 15 mins)
+                        function error_exit {
+                            /opt/aws/bin/cfn-signal -e 1 --stack ${AWS::StackName} --resource MyAutoScalingGroup --region ${AWS::Region}
+                            exit 1
+                        }
+                        trap error_exit ERR
 
+                        exec > >(tee /var/log/user-data.log|logger -t user-data -s 2>/dev/console) 2>&1
+
+                        # 1. Wait for apt lock (prevents crash if background updates are running)
+                        while fuser /var/lib/dpkg/lock >/dev/null 2>&1 ; do sleep 1 ; done
+                        while fuser /var/lib/apt/lists/lock >/dev/null 2>&1 ; do sleep 1 ; done
+
+                        # 2. Update and Install Node.js 16
                         apt-get update -y
-                        apt-get -y purge unattended-upgrades
-                        curl -sL https://deb.nodesource.com/setup_16.x | sudo -E bash -
-                        apt-get -y install curl dirmngr apt-transport-https lsb-release ca-certificates python-setuptools awscli nodejs gcc g++ make nginx
+                        curl -fsSL https://deb.nodesource.com/setup_16.x | sudo -E bash -
+                        apt-get -y install curl dirmngr apt-transport-https lsb-release ca-certificates python-setuptools python3-pip awscli nodejs gcc g++ make nginx
 
+                        # 3. Create User
                         addgroup --system --gid 1033 juicer
                         adduser --system --uid 1033 --gid juicer --ingroup juicer --home /home/juicer --shell /bin/bash juicer
                         
+                        # 4. Install CloudFormation Helpers (WITH THE FIX)
                         mkdir -p /opt/aws/bin
-                        cd /opt/aws/bin
-
+                        cd /
                         wget https://s3.amazonaws.com/aws-cloudformation-examples/aws-cfn-bootstrap-py3-latest.tar.gz
-                        python3 -m pip install aws-cfn-bootstrap-py3-latest.tar.gz
+                        
+                        # FIX: Added --break-system-packages to bypass Ubuntu 22.04 protection
+                        python3 -m pip install aws-cfn-bootstrap-py3-latest.tar.gz --break-system-packages
 
-                        echo "Dang it - if you can see this text, you'r accessing out private information!" > /tmp/secret-information.txt
+                        # Link binaries
+                        ln -s /usr/local/bin/cfn-* /opt/aws/bin/
+
+                        # 5. Create Flag & Upload
+                        echo "Dang it - if you can see this text, you're accessing our private information!" > /tmp/secret-information.txt
                         aws s3 cp /tmp/secret-information.txt s3://${MyS3Bucket}
+                        
+                        # 6. Run cfn-init
                         /opt/aws/bin/cfn-init -v --stack ${AWS::StackName} --resource MyLaunchTemplate --region ${AWS::Region} --configsets default
 
-
+                        # 7. Install Juice Shop
                         wget -q https://github.com/juice-shop/juice-shop/releases/download/v13.3.0/juice-shop-13.3.0_node16_linux_x64.tgz
                         tar -xzf juice-shop-13.3.0_node16_linux_x64.tgz
                         mv juice-shop_13.3.0 juice-shop
                         cd /juice-shop
+                        
+                        # Permissions
                         chown -R juicer .
                         mkdir logs
                         chown -R juicer logs
                         chgrp -R 0 ftp/ frontend/dist/ logs/ data/ i18n/
                         chmod -R g=u ftp/ frontend/dist/ logs/ data/ i18n/
 
-                        sytemctl daemon-reload
+                        # 8. Enable Nginx & Services
+                        ln -s /etc/nginx/sites-available/juice-shop /etc/nginx/sites-enabled/juice-shop
+                        rm /etc/nginx/sites-enabled/default
+                        systemctl daemon-reload
                         systemctl restart juice-shop
                         systemctl enable juice-shop
                         systemctl restart nginx
 
-                        /opt/aws/bin/cfn-signal -e $? --stack ${AWS::StackName} --resource MyAutoScalingGroup --region ${AWS::Region}
-
-    MyAutoScalingGroup:
-        Type: AWS::AutoScaling::AutoScalingGroup
-        CreationPolicy:
-            ResourceSignal:
-                Timeout: PT15M
-        Properties:
-            MinSize: 1
-            MaxSize: 3
-            LaunchTemplate: 
-                LaunchTemplateId: !Ref MyLaunchTemplate
-                Version: !GetAtt MyLaunchTemplate.LatestVersionNumber
-            HealthCheckType: ELB
-            HealthCheckGracePeriod: 300
-            TargetGroupARNs:
-                - !Ref MyinstanceTargetgroup
-            VPCZoneIdentifier:
-                - !Ref MyVPCSubnet1
-                - !Ref MyVPCSubnet2
-            Tags:
-                - Key: Name
-                  PropagateAtLaunch: true 
-                  Value: !Sub ${EnvironmentName}-Auto-Scaling-Group
-
-
-
-
+                        # 9. SUCCESS SIGNAL
+                        # We turn off the trap so it doesn't fire the failure signal
+                        trap - ERR
+                        /opt/aws/bin/cfn-signal -e 0 --stack ${AWS::StackName} --resource MyAutoScalingGroup --region ${AWS::Region}
 Outputs:
     LoadBalancerDNS:
         Description: the URL of the Load Balancer
