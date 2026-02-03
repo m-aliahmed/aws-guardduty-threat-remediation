@@ -1,11 +1,11 @@
 AWSTemplateFormatVersion: '2010-09-09'
-Description: Basic CloudFormation Template
+Description: Production Juice Shop - Native Installation for Vulnerability Testing (WORKING VERSION)
 
 Parameters:
     EnvironmentName:
         Type: String
         Default: JuiceShop
-        Description: A Vunrelible Web Application for Security Training
+        Description: A Vulnerable Web Application for Security Training
     
     InstanceType:
         Type: String
@@ -20,10 +20,7 @@ Parameters:
     
     KeyName:
         Type: AWS::EC2::KeyPair::KeyName
-        Description: Name of an existing EC2 KeyPair to enable SSH access to the instances
-    
-
-    
+        Description: Name of an existing EC2 KeyPair
 
 Resources:
     MyVPC:
@@ -35,6 +32,7 @@ Resources:
             Tags:
                 - Key: Name
                   Value: !Sub ${EnvironmentName}-VPC
+
     MyInternetGateway:
         Type: AWS::EC2::InternetGateway
         Properties:
@@ -54,7 +52,6 @@ Resources:
             VpcId: !Ref MyVPC
             CidrBlock: 10.0.3.0/28
             AvailabilityZone: !Select [ 0, !GetAZs '' ]
-
             MapPublicIpOnLaunch: true
             Tags:
                 - Key: Name
@@ -81,11 +78,11 @@ Resources:
 
     MyInternetRoute:
         Type: AWS::EC2::Route
+        DependsOn: MyVPCGatewayAttachment
         Properties:
             RouteTableId: !Ref MyRouteTable
             DestinationCidrBlock: 0.0.0.0/0
             GatewayId: !Ref MyInternetGateway
-
 
     MySubnetAssociation1:
         Type: AWS::EC2::SubnetRouteTableAssociation
@@ -113,31 +110,22 @@ Resources:
                   FromPort: 443
                   ToPort: 443
                   CidrIp: 0.0.0.0/0
-            Tags:
-                - Key: Name
-                  Value: !Sub ${EnvironmentName}-LB-SG
-                      
+
     MyServerSecurityGroup:
         Type: AWS::EC2::SecurityGroup
         Properties:
-            GroupDescription: Allow HTTP and HTTPS from Load Balancer
+            GroupDescription: Allow HTTP from Load Balancer and SSH
             VpcId: !Ref MyVPC
             SecurityGroupIngress:
                 - IpProtocol: tcp
                   FromPort: 80
                   ToPort: 80
                   SourceSecurityGroupId: !Ref MyLbSecurityGroup
-                
                 - IpProtocol: tcp
-                  FromPort: 443
-                  ToPort: 443
-                  SourceSecurityGroupId: !Ref MyLbSecurityGroup
+                  FromPort: 22
+                  ToPort: 22
+                  CidrIp: 0.0.0.0/0
 
-            Tags:
-                - Key: Name
-                  Value: !Sub ${EnvironmentName}-Server-SG
-
-    
     MyS3Bucket:
         Type: AWS::S3::Bucket
         DeletionPolicy: Delete
@@ -151,11 +139,8 @@ Resources:
                 BlockPublicPolicy: true
                 IgnorePublicAcls: true
                 RestrictPublicBuckets: true
-            Tags:
-                - Key: Name
-                  Value: !Sub ${EnvironmentName}-S3-Bucket
 
-    MyVulnerableRole:
+    MyEc2Role:
         Type: AWS::IAM::Role
         Properties:
             AssumeRolePolicyDocument:
@@ -165,32 +150,33 @@ Resources:
                       Principal:
                         Service: "ec2.amazonaws.com"
                       Action: 'sts:AssumeRole'
+            ManagedPolicyArns:
+                - arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore
             Policies:
-                - PolicyName: S3policy
+                - PolicyName: InstanceS3Policy
+                  PolicyDocument:
+                      Version: "2012-10-17"
+                      Statement:
+                        - Effect: Allow
+                          Action: ["s3:GetObject", "s3:ListBucket", "s3:PutObject"]
+                          Resource: 
+                            - !GetAtt MyS3Bucket.Arn
+                            - !Sub ${MyS3Bucket.Arn}/*
+                - PolicyName: CloudFormationSignal
                   PolicyDocument:
                       Version: "2012-10-17"
                       Statement:
                         - Effect: Allow
                           Action:
-                            - s3:GetObject
-                            - s3:ListBucket
-                            - s3:PutObject
-                          Resource: 
-                            - !GetAtt MyS3Bucket.Arn
-                            - !Sub ${MyS3Bucket.Arn}/*
-                        
-            Tags:
-                - Key: Name
-                  Value: !Sub ${EnvironmentName}-Vulnerable-Role
-
+                            - "cloudformation:SignalResource"
+                            - "cloudformation:DescribeStackResource"
+                          Resource: "*"
 
     MyInstanceProfile:
         Type: AWS::IAM::InstanceProfile
         Properties:
-            Roles:
-                - !Ref MyVulnerableRole
+            Roles: [ !Ref MyEc2Role ]
 
-    
     MyinstanceTargetgroup:
         Type: AWS::ElasticLoadBalancingV2::TargetGroup
         Properties:
@@ -198,10 +184,15 @@ Resources:
             Protocol: HTTP
             VpcId: !Ref MyVPC
             TargetType: instance
+            HealthCheckEnabled: true
             HealthCheckPath: /
-            Tags:
-                - Key: Name
-                  Value: !Sub ${EnvironmentName}-Target-Group
+            HealthCheckIntervalSeconds: 30
+            HealthCheckTimeoutSeconds: 5
+            HealthyThresholdCount: 2
+            UnhealthyThresholdCount: 3
+            Matcher:
+                HttpCode: 200-399
+
     MyLoadBalancer:
         Type: AWS::ElasticLoadBalancingV2::LoadBalancer
         Properties:
@@ -209,11 +200,9 @@ Resources:
             Subnets:
                 - !Ref MyVPCSubnet1
                 - !Ref MyVPCSubnet2
-            SecurityGroups: 
-                - !Ref MyLbSecurityGroup
-            Tags:
-                - Key: Name
-                  Value: !Sub ${EnvironmentName}-Load-Balancer
+            SecurityGroups: [ !Ref MyLbSecurityGroup ]
+            Type: application
+
     MyListener:
         Type: AWS::ElasticLoadBalancingV2::Listener
         Properties:
@@ -223,223 +212,276 @@ Resources:
                   TargetGroupArn: !Ref MyinstanceTargetgroup
             Port: 80
             Protocol: HTTP
-           
 
     MyAutoScalingGroup:
         Type: AWS::AutoScaling::AutoScalingGroup
         CreationPolicy:
-            AutoScalingCreationPolicy:
-                MinSuccessfulInstancesPercent: 100
             ResourceSignal:
                 Timeout: PT15M
-                Count: "1"
-        UpdatePolicy:
-            AutoScalingScheduledAction:
-                IgnoreUnmodifiedGroupSizeProperties: true
-            AutoScalingRollingUpdate:
-                MinInstancesInService: 1
-                MaxBatchSize: 2
-                PauseTime: PT5M
-                WaitOnResourceSignals: true
-                SuspendProcesses:
-                    - HealthCheck
-                    - ReplaceUnhealthy
-                    - AZRebalance
-                    - AlarmNotification
-                    - ScheduledActions
+                Count: 1
         Properties:
-            Cooldown: 0
-            DefaultInstanceWarmup: 10
-            MinSize: 1
-            MaxSize: 2
-            DesiredCapacity: 1
-            LaunchTemplate: 
-                LaunchTemplateId: !Ref MyLaunchTemplate
-                Version: !GetAtt MyLaunchTemplate.LatestVersionNumber
-            HealthCheckType: ELB
-            HealthCheckGracePeriod: 300
-            TargetGroupARNs:
-                - !Ref MyinstanceTargetgroup
             VPCZoneIdentifier:
                 - !Ref MyVPCSubnet1
                 - !Ref MyVPCSubnet2
-            
+            LaunchTemplate: 
+                LaunchTemplateId: !Ref MyLaunchTemplate
+                Version: !GetAtt MyLaunchTemplate.LatestVersionNumber
+            MinSize: 1
+            MaxSize: 2
+            DesiredCapacity: 1
+            TargetGroupARNs: [ !Ref MyinstanceTargetgroup ]
+            HealthCheckType: ELB
+            HealthCheckGracePeriod: 600
             Tags:
                 - Key: Name
                   PropagateAtLaunch: true 
-                  Value: !Sub ${EnvironmentName}-Auto-Scaling-Group
+                  Value: !Sub ${EnvironmentName}-ASG
 
-
- 
     MyLaunchTemplate:
         Type: AWS::EC2::LaunchTemplate
-        Metadata:
-            AWS::CloudFormation::Init:
-                configSets:
-                    default:
-                        - CfnHupInstall
-                CfnHupInstall:
-                    files:
-                        /etc/cfn/cfn-hup.conf:
-                            content: !Sub |
-                                [main]
-                                stack=${AWS::StackName}
-                                region=${AWS::Region}
-                            mode: '000400'
-                            owner: root
-                            group: root
-                        /etc/cfn/hooks.d/cfn-auto-reloader.conf:
-                            content: !Sub |
-                                [cfn-auto-reloader-hook]
-                                triggers=post.update
-                                path=Resources.MyLaunchTemplate.Metadata.AWS::CloudFormation::Init
-                                action=/opt/aws/bin/cfn-init -v --stack ${AWS::StackName} --resource MyLaunchTemplate --region ${AWS::Region}
-                                runas=root
-                            mode: '000400'
-                            owner: root
-                            group: root
-                        /etc/systemd/system/cfn-hup.service:
-                            content: !Sub |
-                                [Unit]
-                                Description=CloudFormation HUP daemon
-                                After=network.target
-
-                                [Service]
-                                Type=simple
-                                ExecStart=/opt/aws/bin/cfn-hup -f /etc/cfn/cfn-hup.conf -s
-                                Restart=always
-                                RestartSec=10
-
-                                [Install]
-                                WantedBy=multi-user.target
-                           
-                        /etc/systemd/system/juice-shop.service:
-                            content: !Sub |
-                                [Unit]
-                                Description=Juice Shop Service
-                                After=network.target
-
-                                [Service]
-                                Type=simple
-                                User=juicer
-                                WorkingDirectory=/juice-shop
-                                ExecStart=/usr/bin/npm start
-                                Restart=always
-                                RestartSec=10
-
-                                [Install]
-                                WantedBy=multi-user.target
-                        /etc/nginx/sites-available/juice-shop:
-                            content: |
-                                server {
-                                    listen 80;
-                                    server_name localhost;
-
-                                    location / {
-                                        proxy_pass http://localhost:3000;
-                                        proxy_http_version 1.1;
-                                        proxy_set_header Upgrade $http_upgrade;
-                                        proxy_set_header Connection 'upgrade';
-                                        proxy_set_header Host $host;
-                                        proxy_cache_bypass $http_upgrade;
-                                    }
-                                }
-
-                    commands:
-                        01_install_cfn_hup:
-                            command: |
-                                set -xe
-                                systemctl enable cfn-hup.service
-                                systemctl start cfn-hup.service
-                          
         Properties:
-            LaunchTemplateName: MyJuiceShop-template
             LaunchTemplateData:
-                BlockDeviceMappings:
-                    - DeviceName: /dev/xvda
-                      Ebs:
-                        VolumeSize: 20
-                        VolumeType: gp3
-                        DeleteOnTermination: true
-                ImageId:  resolve:ssm:/aws/service/canonical/ubuntu/server/22.04/stable/current/amd64/hvm/ebs-gp2/ami-id
+                ImageId: resolve:ssm:/aws/service/canonical/ubuntu/server/22.04/stable/current/amd64/hvm/ebs-gp2/ami-id
                 InstanceType: !Ref InstanceType
                 KeyName: !Ref KeyName
-                SecurityGroupIds:
-                    - !Ref MyServerSecurityGroup
+                SecurityGroupIds: [ !Ref MyServerSecurityGroup ]
                 IamInstanceProfile: 
                     Name: !Ref MyInstanceProfile
-                
                 UserData: 
                     Fn::Base64: !Sub | 
                         #!/bin/bash -xe
+                        exec > >(tee /var/log/user-data.log) 2>&1
                         
-                        # TRAP: If this script crashes, signal FAILURE immediately (don't wait 15 mins)
-                        function error_exit {
-                            /opt/aws/bin/cfn-signal -e 1 --stack ${AWS::StackName} --resource MyAutoScalingGroup --region ${AWS::Region}
-                            exit 1
+                        echo "=========================================="
+                        echo "USERDATA START: $(date)"
+                        echo "Stack: ${AWS::StackName}"
+                        echo "Region: ${AWS::Region}"
+                        echo "=========================================="
+                        
+                        # Variables
+                        STACK_NAME="${AWS::StackName}"
+                        REGION="${AWS::Region}"
+                        
+                        # Function to signal and exit
+                        signal_and_exit() {
+                            local exit_code=$1
+                            local message="$2"
+                            echo "$message"
+                            
+                            # Get instance ID using IMDSv2
+                            TOKEN=$(curl -X PUT "http://169.254.169.254/latest/api/token" -H "X-aws-ec2-metadata-token-ttl-seconds: 21600" 2>/dev/null)
+                            INSTANCE_ID=$(curl -H "X-aws-ec2-metadata-token: $TOKEN" http://169.254.169.254/latest/meta-data/instance-id 2>/dev/null)
+                            
+                            # Try cfn-signal first
+                            if command -v cfn-signal >/dev/null 2>&1; then
+                                cfn-signal -e $exit_code --stack "$STACK_NAME" --resource MyAutoScalingGroup --region "$REGION"
+                            else
+                                # Fallback to AWS CLI
+                                echo "Using AWS CLI fallback..."
+                                STATUS=$([ $exit_code -eq 0 ] && echo "SUCCESS" || echo "FAILURE")
+                                aws cloudformation signal-resource \
+                                    --stack-name "$STACK_NAME" \
+                                    --logical-resource-id MyAutoScalingGroup \
+                                    --unique-id "$INSTANCE_ID" \
+                                    --status "$STATUS" \
+                                    --region "$REGION" 2>&1 || echo "Signal failed!"
+                            fi
+                            exit $exit_code
                         }
-                        trap error_exit ERR
-
-                        exec > >(tee /var/log/user-data.log|logger -t user-data -s 2>/dev/console) 2>&1
-
-                        # 1. Wait for apt lock (prevents crash if background updates are running)
-                        while fuser /var/lib/dpkg/lock >/dev/null 2>&1 ; do sleep 1 ; done
-                        while fuser /var/lib/apt/lists/lock >/dev/null 2>&1 ; do sleep 1 ; done
-
-                        # 2. Update and Install Node.js 16
-                        apt-get update -y
-                        curl -fsSL https://deb.nodesource.com/setup_16.x | sudo -E bash -
-                        apt-get -y install curl dirmngr apt-transport-https lsb-release ca-certificates python-setuptools python3-pip awscli nodejs gcc g++ make nginx
-
-                        # 3. Create User
-                        addgroup --system --gid 1033 juicer
-                        adduser --system --uid 1033 --gid juicer --ingroup juicer --home /home/juicer --shell /bin/bash juicer
                         
-                        # 4. Install CloudFormation Helpers (WITH THE FIX)
-                        mkdir -p /opt/aws/bin
-                        cd /
-                        wget https://s3.amazonaws.com/aws-cloudformation-examples/aws-cfn-bootstrap-py3-latest.tar.gz
+                        # Step 1: Update system
+                        echo "[1/10] Updating system packages..."
+                        apt-get update -y || signal_and_exit 1 "apt-get update failed"
                         
-                        # FIX: Added --break-system-packages to bypass Ubuntu 22.04 protection
-                        python3 -m pip install aws-cfn-bootstrap-py3-latest.tar.gz --break-system-packages
-
-                        # Link binaries
-                        ln -s /usr/local/bin/cfn-* /opt/aws/bin/
-
-                        # 5. Create Flag & Upload
-                        echo "Dang it - if you can see this text, you're accessing our private information!" > /tmp/secret-information.txt
-                        aws s3 cp /tmp/secret-information.txt s3://${MyS3Bucket}
+                        # Step 2: Install base packages including CFN tools
+                        echo "[2/10] Installing base packages and CFN tools..."
+                        DEBIAN_FRONTEND=noninteractive apt-get install -y \
+                            python3-pip \
+                            python3-setuptools \
+                            wget \
+                            curl \
+                            nginx \
+                            awscli \
+                            ca-certificates \
+                            gnupg || signal_and_exit 1 "Failed to install base packages"
                         
-                        # 6. Run cfn-init
-                        /opt/aws/bin/cfn-init -v --stack ${AWS::StackName} --resource MyLaunchTemplate --region ${AWS::Region} --configsets default
-
-                        # 7. Install Juice Shop
-                        wget -q https://github.com/juice-shop/juice-shop/releases/download/v13.3.0/juice-shop-13.3.0_node16_linux_x64.tgz
-                        tar -xzf juice-shop-13.3.0_node16_linux_x64.tgz
-                        mv juice-shop_13.3.0 juice-shop
-                        cd /juice-shop
+                        # Step 3: Install CloudFormation helper scripts (FIXED - no --break-system-packages)
+                        echo "[3/10] Installing CloudFormation helper scripts..."
+                        pip3 install https://s3.amazonaws.com/cloudformation-examples/aws-cfn-bootstrap-py3-latest.tar.gz \
+                            || signal_and_exit 1 "Failed to install cfn-bootstrap"
                         
-                        # Permissions
-                        chown -R juicer .
-                        mkdir logs
-                        chown -R juicer logs
-                        chgrp -R 0 ftp/ frontend/dist/ logs/ data/ i18n/
-                        chmod -R g=u ftp/ frontend/dist/ logs/ data/ i18n/
-
-                        # 8. Enable Nginx & Services
-                        ln -s /etc/nginx/sites-available/juice-shop /etc/nginx/sites-enabled/juice-shop
-                        rm /etc/nginx/sites-enabled/default
+                        # Create symlinks for cfn tools
+                        for tool in cfn-signal cfn-init cfn-hup cfn-get-metadata; do
+                            ln -sf /usr/local/bin/$tool /usr/bin/$tool 2>/dev/null || true
+                        done
+                        
+                        # Verify cfn-signal is available
+                        if ! command -v cfn-signal >/dev/null 2>&1; then
+                            echo "WARNING: cfn-signal not in PATH, will use AWS CLI fallback"
+                        else
+                            echo "cfn-signal found at: $(which cfn-signal)"
+                        fi
+                        
+                        # Step 4: Install Node.js 18 LTS (required for Juice Shop)
+                        echo "[4/10] Installing Node.js 18 LTS..."
+                        curl -fsSL https://deb.nodesource.com/setup_18.x | bash - \
+                            || signal_and_exit 1 "Failed to add NodeSource repository"
+                        
+                        apt-get install -y nodejs || signal_and_exit 1 "Failed to install Node.js"
+                        
+                        # Verify Node.js installation
+                        echo "Node.js version: $(node --version)"
+                        echo "npm version: $(npm --version)"
+                        
+                        # Step 5: Create Juice Shop user
+                        echo "[5/10] Creating Juice Shop user..."
+                        useradd -r -m -s /bin/bash juicer || echo "User already exists"
+                        
+                        # Step 6: Download Juice Shop
+                        echo "[6/10] Downloading Juice Shop v16.0.1..."
+                        cd /tmp
+                        wget -q https://github.com/juice-shop/juice-shop/releases/download/v16.0.1/juice-shop-16.0.1_node18_linux_x64.tgz \
+                            || signal_and_exit 1 "Failed to download Juice Shop"
+                        
+                        # Step 7: Extract and install Juice Shop
+                        echo "[7/10] Extracting Juice Shop..."
+                        tar -xzf juice-shop-16.0.1_node18_linux_x64.tgz \
+                            || signal_and_exit 1 "Failed to extract Juice Shop"
+                        
+                        mv juice-shop_16.0.1 /juice-shop || signal_and_exit 1 "Failed to move Juice Shop"
+                        chown -R juicer:juicer /juice-shop || signal_and_exit 1 "Failed to set permissions"
+                        
+                        # Step 8: Create systemd service
+                        echo "[8/10] Creating Juice Shop systemd service..."
+                        cat > /etc/systemd/system/juice-shop.service << 'EOFSERVICE'
+                        [Unit]
+                        Description=OWASP Juice Shop
+                        After=network.target
+                        
+                        [Service]
+                        Type=simple
+                        User=juicer
+                        Group=juicer
+                        WorkingDirectory=/juice-shop
+                        Environment="NODE_ENV=production"
+                        Environment="PORT=3000"
+                        ExecStart=/usr/bin/npm start
+                        Restart=always
+                        RestartSec=10
+                        StandardOutput=journal
+                        StandardError=journal
+                        SyslogIdentifier=juice-shop
+                        
+                        [Install]
+                        WantedBy=multi-user.target
+                        EOFSERVICE
+                        
+                        # Configure Nginx as reverse proxy
+                        echo "[8/10] Configuring Nginx..."
+                        cat > /etc/nginx/sites-available/juice-shop << 'EOFNGINX'
+                        server {
+                            listen 80 default_server;
+                            listen [::]:80 default_server;
+                            server_name _;
+                            
+                            location / {
+                                proxy_pass http://127.0.0.1:3000;
+                                proxy_http_version 1.1;
+                                proxy_set_header Upgrade $http_upgrade;
+                                proxy_set_header Connection 'upgrade';
+                                proxy_set_header Host $host;
+                                proxy_cache_bypass $http_upgrade;
+                                proxy_set_header X-Real-IP $remote_addr;
+                                proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+                                proxy_set_header X-Forwarded-Proto $scheme;
+                                
+                                # Timeouts
+                                proxy_connect_timeout 60s;
+                                proxy_send_timeout 60s;
+                                proxy_read_timeout 60s;
+                            }
+                        }
+                        EOFNGINX
+                        
+                        # Enable Nginx configuration
+                        ln -sf /etc/nginx/sites-available/juice-shop /etc/nginx/sites-enabled/juice-shop
+                        rm -f /etc/nginx/sites-enabled/default
+                        
+                        # Test Nginx configuration
+                        nginx -t || signal_and_exit 1 "Nginx configuration test failed"
+                        
+                        # Step 9: Start services
+                        echo "[9/10] Starting Juice Shop and Nginx services..."
                         systemctl daemon-reload
-                        systemctl restart juice-shop
-                        systemctl enable juice-shop
-                        systemctl restart nginx
+                        systemctl enable juice-shop || signal_and_exit 1 "Failed to enable Juice Shop"
+                        systemctl start juice-shop || signal_and_exit 1 "Failed to start Juice Shop"
+                        systemctl enable nginx || signal_and_exit 1 "Failed to enable Nginx"
+                        systemctl restart nginx || signal_and_exit 1 "Failed to start Nginx"
+                        
+                        # Step 10: Wait for Juice Shop to be ready
+                        echo "[10/10] Waiting for Juice Shop to become ready..."
+                        MAX_ATTEMPTS=60
+                        ATTEMPT=0
+                        
+                        while [ $ATTEMPT -lt $MAX_ATTEMPTS ]; do
+                            ATTEMPT=$((ATTEMPT + 1))
+                            
+                            # Check if service is running
+                            if ! systemctl is-active --quiet juice-shop; then
+                                echo "Attempt $ATTEMPT/$MAX_ATTEMPTS: Service not active yet..."
+                                sleep 5
+                                continue
+                            fi
+                            
+                            # Check if application responds
+                            if curl -sf http://localhost:3000/ >/dev/null 2>&1; then
+                                echo "SUCCESS: Juice Shop is responding on port 3000!"
+                                break
+                            fi
+                            
+                            echo "Attempt $ATTEMPT/$MAX_ATTEMPTS: Waiting for application to respond..."
+                            sleep 5
+                        done
+                        
+                        # Final verification
+                        if ! curl -sf http://localhost:3000/ >/dev/null 2>&1; then
+                            echo "ERROR: Juice Shop failed to start after $MAX_ATTEMPTS attempts"
+                            echo "=== Service Status ==="
+                            systemctl status juice-shop --no-pager
+                            echo "=== Last 50 Journal Entries ==="
+                            journalctl -u juice-shop -n 50 --no-pager
+                            signal_and_exit 1 "Juice Shop failed to start"
+                        fi
+                        
+                        # Verify Nginx proxy
+                        echo "Verifying Nginx reverse proxy..."
+                        if ! curl -sf http://localhost:80/ >/dev/null 2>&1; then
+                            echo "ERROR: Nginx proxy verification failed"
+                            systemctl status nginx --no-pager
+                            signal_and_exit 1 "Nginx proxy not working"
+                        fi
+                        
+                        echo "=========================================="
+                        echo "SUCCESS: All services are running!"
+                        echo "Juice Shop: http://localhost:3000"
+                        echo "Nginx Proxy: http://localhost:80"
+                        echo "USERDATA END: $(date)"
+                        echo "=========================================="
+                        
+                        # Signal success to CloudFormation
+                        signal_and_exit 0 "Installation completed successfully"
 
-                        # 9. SUCCESS SIGNAL
-                        # We turn off the trap so it doesn't fire the failure signal
-                        trap - ERR
-                        /opt/aws/bin/cfn-signal -e 0 --stack ${AWS::StackName} --resource MyAutoScalingGroup --region ${AWS::Region}
 Outputs:
     LoadBalancerDNS:
-        Description: the URL of the Load Balancer
-        Value: !GetAtt MyLoadBalancer.DNSName
-
+        Description: Juice Shop URL
+        Value: !Sub "http://${MyLoadBalancer.DNSName}"
+        Export:
+            Name: !Sub "${AWS::StackName}-LoadBalancerURL"
+    
+    S3BucketName:
+        Description: S3 Bucket for storage
+        Value: !Ref MyS3Bucket
+    
+    DebugInfo:
+        Description: SSH into instance and check logs
+        Value: !Sub "ssh -i ${KeyName}.pem ubuntu@<instance-ip> 'sudo tail -f /var/log/user-data.log'"
