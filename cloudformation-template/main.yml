@@ -23,7 +23,7 @@ Parameters:
         Description: Name of an existing EC2 KeyPair
 
 Resources:
-    MyVPC:
+    JuiceShopVPC:
         Type: AWS::EC2::VPC
         Properties:
             CidrBlock: 10.0.3.0/26
@@ -43,13 +43,13 @@ Resources:
     MyVPCGatewayAttachment:
         Type: AWS::EC2::VPCGatewayAttachment
         Properties:
-            VpcId: !Ref MyVPC
+            VpcId: !Ref JuiceShopVPC
             InternetGatewayId: !Ref MyInternetGateway
             
     MyVPCSubnet1:
         Type: AWS::EC2::Subnet
         Properties:
-            VpcId: !Ref MyVPC
+            VpcId: !Ref JuiceShopVPC
             CidrBlock: 10.0.3.0/28
             AvailabilityZone: !Select [ 0, !GetAZs '' ]
             MapPublicIpOnLaunch: true
@@ -60,7 +60,7 @@ Resources:
     MyVPCSubnet2:
         Type: AWS::EC2::Subnet
         Properties:
-            VpcId: !Ref MyVPC
+            VpcId: !Ref JuiceShopVPC
             CidrBlock: 10.0.3.16/28
             AvailabilityZone: !Select [ 1, !GetAZs '' ]
             MapPublicIpOnLaunch: true
@@ -71,7 +71,7 @@ Resources:
     MyRouteTable:
         Type: AWS::EC2::RouteTable
         Properties:
-            VpcId: !Ref MyVPC 
+            VpcId: !Ref JuiceShopVPC
             Tags: 
                 - Key: Name
                   Value: !Sub ${EnvironmentName}-RouteTable
@@ -100,7 +100,7 @@ Resources:
         Type: AWS::EC2::SecurityGroup
         Properties:
             GroupDescription: Allow HTTP and HTTPS from everywhere
-            VpcId: !Ref MyVPC
+            VpcId: !Ref JuiceShopVPC
             SecurityGroupIngress:
                 - IpProtocol: tcp
                   FromPort: 80
@@ -115,7 +115,7 @@ Resources:
         Type: AWS::EC2::SecurityGroup
         Properties:
             GroupDescription: Allow HTTP from Load Balancer and SSH
-            VpcId: !Ref MyVPC
+            VpcId: !Ref JuiceShopVPC
             SecurityGroupIngress:
                 - IpProtocol: tcp
                   FromPort: 80
@@ -182,7 +182,7 @@ Resources:
         Properties:
             Port: 80
             Protocol: HTTP
-            VpcId: !Ref MyVPC
+            VpcId: !Ref JuiceShopVPC
             TargetType: instance
             HealthCheckEnabled: true
             HealthCheckPath: /
@@ -321,6 +321,18 @@ Resources:
                         else
                             echo "cfn-signal found at: $(which cfn-signal)"
                         fi
+
+
+                        # Step 3.5: Setup the CTF Challenge (The Secret Flag)
+                        echo "[3.5/10] Creating and Uploading Secret Flag..."
+                        echo "Dang it - if you can see this text, you're accessing our private information!" > /tmp/secret-information.txt
+                        
+                        # Upload to S3 (Using the template variable for the bucket name)
+                        aws s3 cp /tmp/secret-information.txt s3://${MyS3Bucket}/secret-information.txt \
+                            || signal_and_exit 1 "Failed to upload Secret Flag to S3"
+                        
+                        echo "Secret Flag uploaded successfully."
+
                         
                         # Step 4: Install Node.js 18 LTS (required for Juice Shop)
                         echo "[4/10] Installing Node.js 18 LTS..."
