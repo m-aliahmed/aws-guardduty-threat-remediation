@@ -1,5 +1,5 @@
 AWSTemplateFormatVersion: '2010-09-09'
-Description: Production Juice Shop - Native Installation for Vulnerability Testing (WORKING VERSION)
+Description: Production Juice Shop - Native Installation for Vulnerability Testing (FINAL VERSION)
 
 Parameters:
     EnvironmentName:
@@ -23,6 +23,9 @@ Parameters:
         Description: Name of an existing EC2 KeyPair
 
 Resources:
+    # ------------------------------------------------------------------
+    # NETWORK RESOURCES
+    # ------------------------------------------------------------------
     JuiceShopVPC:
         Type: AWS::EC2::VPC
         Properties:
@@ -33,20 +36,20 @@ Resources:
                 - Key: Name
                   Value: !Sub ${EnvironmentName}-VPC
 
-    MyInternetGateway:
+    JuiceShopInternetGateway:
         Type: AWS::EC2::InternetGateway
         Properties:
             Tags:
                 - Key: Name
                   Value: !Sub ${EnvironmentName}-IG
 
-    MyVPCGatewayAttachment:
+    JuiceShopVPCGatewayAttachment:
         Type: AWS::EC2::VPCGatewayAttachment
         Properties:
             VpcId: !Ref JuiceShopVPC
-            InternetGatewayId: !Ref MyInternetGateway
+            InternetGatewayId: !Ref JuiceShopInternetGateway
             
-    MyVPCSubnet1:
+    JuiceShopSubnet1:
         Type: AWS::EC2::Subnet
         Properties:
             VpcId: !Ref JuiceShopVPC
@@ -57,7 +60,7 @@ Resources:
                 - Key: Name
                   Value: !Sub ${EnvironmentName}-Subnet1
     
-    MyVPCSubnet2:
+    JuiceShopSubnet2:
         Type: AWS::EC2::Subnet
         Properties:
             VpcId: !Ref JuiceShopVPC
@@ -68,7 +71,7 @@ Resources:
                 - Key: Name
                   Value: !Sub ${EnvironmentName}-Subnet2
 
-    MyRouteTable:
+    JuiceShopRouteTable:
         Type: AWS::EC2::RouteTable
         Properties:
             VpcId: !Ref JuiceShopVPC
@@ -76,27 +79,30 @@ Resources:
                 - Key: Name
                   Value: !Sub ${EnvironmentName}-RouteTable
 
-    MyInternetRoute:
+    JuiceShopInternetRoute:
         Type: AWS::EC2::Route
-        DependsOn: MyVPCGatewayAttachment
+        DependsOn: JuiceShopVPCGatewayAttachment
         Properties:
-            RouteTableId: !Ref MyRouteTable
+            RouteTableId: !Ref JuiceShopRouteTable
             DestinationCidrBlock: 0.0.0.0/0
-            GatewayId: !Ref MyInternetGateway
+            GatewayId: !Ref JuiceShopInternetGateway # FIXED: Was empty
 
-    MySubnetAssociation1:
+    JuiceShopSubnetAssociation1:
         Type: AWS::EC2::SubnetRouteTableAssociation
         Properties:
-            RouteTableId: !Ref MyRouteTable
-            SubnetId: !Ref MyVPCSubnet1
+            RouteTableId: !Ref JuiceShopRouteTable
+            SubnetId: !Ref JuiceShopSubnet1
             
-    MySubnetAssociation2:
+    JuiceShopSubnetAssociation2:
         Type: AWS::EC2::SubnetRouteTableAssociation
         Properties:
-            RouteTableId: !Ref MyRouteTable
-            SubnetId: !Ref MyVPCSubnet2
+            RouteTableId: !Ref JuiceShopRouteTable
+            SubnetId: !Ref JuiceShopSubnet2
 
-    MyLbSecurityGroup:
+    # ------------------------------------------------------------------
+    # SECURITY GROUPS
+    # ------------------------------------------------------------------
+    JuiceShopLbSecurityGroup:
         Type: AWS::EC2::SecurityGroup
         Properties:
             GroupDescription: Allow HTTP and HTTPS from everywhere
@@ -111,7 +117,7 @@ Resources:
                   ToPort: 443
                   CidrIp: 0.0.0.0/0
 
-    MyServerSecurityGroup:
+    JuiceShopServerSecurityGroup:
         Type: AWS::EC2::SecurityGroup
         Properties:
             GroupDescription: Allow HTTP from Load Balancer and SSH
@@ -120,13 +126,16 @@ Resources:
                 - IpProtocol: tcp
                   FromPort: 80
                   ToPort: 80
-                  SourceSecurityGroupId: !Ref MyLbSecurityGroup
+                  SourceSecurityGroupId: !Ref JuiceShopLbSecurityGroup
                 - IpProtocol: tcp
                   FromPort: 22
                   ToPort: 22
                   CidrIp: 0.0.0.0/0
 
-    MyS3Bucket:
+    # ------------------------------------------------------------------
+    # IAM & S3 (CTF COMPONENTS)
+    # ------------------------------------------------------------------
+    JuiceShopS3Bucket:
         Type: AWS::S3::Bucket
         DeletionPolicy: Delete
         Properties:
@@ -140,7 +149,7 @@ Resources:
                 IgnorePublicAcls: true
                 RestrictPublicBuckets: true
 
-    MyEc2Role:
+    JuiceShopEc2Role:
         Type: AWS::IAM::Role
         Properties:
             AssumeRolePolicyDocument:
@@ -160,8 +169,8 @@ Resources:
                         - Effect: Allow
                           Action: ["s3:GetObject", "s3:ListBucket", "s3:PutObject"]
                           Resource: 
-                            - !GetAtt MyS3Bucket.Arn
-                            - !Sub ${MyS3Bucket.Arn}/*
+                            - !GetAtt JuiceShopS3Bucket.Arn
+                            - !Sub ${JuiceShopS3Bucket.Arn}/*
                 - PolicyName: CloudFormationSignal
                   PolicyDocument:
                       Version: "2012-10-17"
@@ -172,12 +181,15 @@ Resources:
                             - "cloudformation:DescribeStackResource"
                           Resource: "*"
 
-    MyInstanceProfile:
+    JuiceShopInstanceProfile:
         Type: AWS::IAM::InstanceProfile
         Properties:
-            Roles: [ !Ref MyEc2Role ]
+            Roles: [ !Ref JuiceShopEc2Role ]
 
-    MyinstanceTargetgroup:
+    # ------------------------------------------------------------------
+    # LOAD BALANCER
+    # ------------------------------------------------------------------
+    JuiceShopTargetgroup:
         Type: AWS::ElasticLoadBalancingV2::TargetGroup
         Properties:
             Port: 80
@@ -193,27 +205,30 @@ Resources:
             Matcher:
                 HttpCode: 200-399
 
-    MyLoadBalancer:
+    JuiceShopLoadBalancer:
         Type: AWS::ElasticLoadBalancingV2::LoadBalancer
         Properties:
             Scheme: internet-facing
             Subnets:
-                - !Ref MyVPCSubnet1
-                - !Ref MyVPCSubnet2
-            SecurityGroups: [ !Ref MyLbSecurityGroup ]
+                - !Ref JuiceShopSubnet1
+                - !Ref JuiceShopSubnet2
+            SecurityGroups: [ !Ref JuiceShopLbSecurityGroup ]
             Type: application
 
-    MyListener:
+    JuiceShopListener:
         Type: AWS::ElasticLoadBalancingV2::Listener
         Properties:
-            LoadBalancerArn: !Ref MyLoadBalancer
+            LoadBalancerArn: !Ref JuiceShopLoadBalancer
             DefaultActions: 
                 - Type: forward
-                  TargetGroupArn: !Ref MyinstanceTargetgroup
+                  TargetGroupArn: !Ref JuiceShopTargetgroup
             Port: 80
             Protocol: HTTP
 
-    MyAutoScalingGroup:
+    # ------------------------------------------------------------------
+    # COMPUTE (ASG & LAUNCH TEMPLATE)
+    # ------------------------------------------------------------------
+    JuiceShopASG:
         Type: AWS::AutoScaling::AutoScalingGroup
         CreationPolicy:
             ResourceSignal:
@@ -221,15 +236,15 @@ Resources:
                 Count: 1
         Properties:
             VPCZoneIdentifier:
-                - !Ref MyVPCSubnet1
-                - !Ref MyVPCSubnet2
+                - !Ref JuiceShopSubnet1
+                - !Ref JuiceShopSubnet2
             LaunchTemplate: 
-                LaunchTemplateId: !Ref MyLaunchTemplate
-                Version: !GetAtt MyLaunchTemplate.LatestVersionNumber
+                LaunchTemplateId: !Ref JuiceShopLaunchTemplate
+                Version: !GetAtt JuiceShopLaunchTemplate.LatestVersionNumber
             MinSize: 1
             MaxSize: 2
             DesiredCapacity: 1
-            TargetGroupARNs: [ !Ref MyinstanceTargetgroup ]
+            TargetGroupARNs: [ !Ref JuiceShopTargetgroup ]
             HealthCheckType: ELB
             HealthCheckGracePeriod: 600
             Tags:
@@ -237,16 +252,16 @@ Resources:
                   PropagateAtLaunch: true 
                   Value: !Sub ${EnvironmentName}-ASG
 
-    MyLaunchTemplate:
+    JuiceShopLaunchTemplate:
         Type: AWS::EC2::LaunchTemplate
         Properties:
             LaunchTemplateData:
                 ImageId: resolve:ssm:/aws/service/canonical/ubuntu/server/22.04/stable/current/amd64/hvm/ebs-gp2/ami-id
                 InstanceType: !Ref InstanceType
                 KeyName: !Ref KeyName
-                SecurityGroupIds: [ !Ref MyServerSecurityGroup ]
+                SecurityGroupIds: [ !Ref JuiceShopServerSecurityGroup ]
                 IamInstanceProfile: 
-                    Name: !Ref MyInstanceProfile
+                    Name: !Ref JuiceShopInstanceProfile
                 UserData: 
                     Fn::Base64: !Sub | 
                         #!/bin/bash -xe
@@ -274,14 +289,14 @@ Resources:
                             
                             # Try cfn-signal first
                             if command -v cfn-signal >/dev/null 2>&1; then
-                                cfn-signal -e $exit_code --stack "$STACK_NAME" --resource MyAutoScalingGroup --region "$REGION"
+                                cfn-signal -e $exit_code --stack "$STACK_NAME" --resource JuiceShopASG --region "$REGION"
                             else
                                 # Fallback to AWS CLI
                                 echo "Using AWS CLI fallback..."
                                 STATUS=$([ $exit_code -eq 0 ] && echo "SUCCESS" || echo "FAILURE")
                                 aws cloudformation signal-resource \
                                     --stack-name "$STACK_NAME" \
-                                    --logical-resource-id MyAutoScalingGroup \
+                                    --logical-resource-id JuiceShopASG \
                                     --unique-id "$INSTANCE_ID" \
                                     --status "$STATUS" \
                                     --region "$REGION" 2>&1 || echo "Signal failed!"
@@ -305,7 +320,7 @@ Resources:
                             ca-certificates \
                             gnupg || signal_and_exit 1 "Failed to install base packages"
                         
-                        # Step 3: Install CloudFormation helper scripts (FIXED - no --break-system-packages)
+                        # Step 3: Install CloudFormation helper scripts
                         echo "[3/10] Installing CloudFormation helper scripts..."
                         pip3 install https://s3.amazonaws.com/cloudformation-examples/aws-cfn-bootstrap-py3-latest.tar.gz \
                             || signal_and_exit 1 "Failed to install cfn-bootstrap"
@@ -328,13 +343,13 @@ Resources:
                         echo "Dang it - if you can see this text, you're accessing our private information!" > /tmp/secret-information.txt
                         
                         # Upload to S3 (Using the template variable for the bucket name)
-                        aws s3 cp /tmp/secret-information.txt s3://${MyS3Bucket}/secret-information.txt \
+                        aws s3 cp /tmp/secret-information.txt s3://${JuiceShopS3Bucket}/secret-information.txt \
                             || signal_and_exit 1 "Failed to upload Secret Flag to S3"
                         
                         echo "Secret Flag uploaded successfully."
 
                         
-                        # Step 4: Install Node.js 18 LTS (required for Juice Shop)
+                        # Step 4: Install Node.js 18 LTS
                         echo "[4/10] Installing Node.js 18 LTS..."
                         curl -fsSL https://deb.nodesource.com/setup_18.x | bash - \
                             || signal_and_exit 1 "Failed to add NodeSource repository"
@@ -483,16 +498,71 @@ Resources:
                         # Signal success to CloudFormation
                         signal_and_exit 0 "Installation completed successfully"
 
+    # ------------------------------------------------------------------
+    # CLOUDFRONT DISTRIBUTION (CDN)
+    # ------------------------------------------------------------------
+    JuiceShopCDNDistribution:
+        Type: AWS::CloudFront::Distribution
+        Metadata:
+            cfn_nag:
+                rules_to_suppress:
+                    - id: W10
+                      reason: "Ignore access logging"
+                    - id: W70
+                      reason: "Ignore minimal protocol"
+        Properties:
+            Tags:
+                - Key: Name
+                  Value: JuiceShop-CloudFront
+            DistributionConfig:
+                Comment: "CloudFront for Juice Shop"
+                Enabled: true
+                PriceClass: PriceClass_100
+                DefaultRootObject: index.html
+                
+                # 1. THE ORIGIN (Points to JuiceShopLoadBalancer)
+                Origins:
+                    - Id: JuiceShopALBOrigin
+                      DomainName: !GetAtt JuiceShopLoadBalancer.DNSName
+                      CustomOriginConfig:
+                          HTTPPort: 80 
+                          HTTPSPort: 443
+                          OriginProtocolPolicy: http-only
+                
+                # 2. THE BEHAVIOR
+                DefaultCacheBehavior:
+                    TargetOriginId: JuiceShopALBOrigin
+                    ViewerProtocolPolicy: allow-all
+                    AllowedMethods:
+                        - GET
+                        - HEAD
+                        - OPTIONS
+                        - PUT
+                        - PATCH
+                        - POST
+                        - DELETE
+                    
+                    # Caching Policy: CachingDisabled (Good for dynamic apps)
+                    CachePolicyId: 4135ea2d-6df8-44a3-9df3-4b5a84be39ad 
+                    # Origin Request Policy: AllViewer (Forward all headers/cookies)
+                    OriginRequestPolicyId: 216adef6-5c7f-47e4-b989-5492eafa07d3
+
 Outputs:
     LoadBalancerDNS:
-        Description: Juice Shop URL
-        Value: !Sub "http://${MyLoadBalancer.DNSName}"
+        Description: Juice Shop URL (Direct)
+        Value: !Sub "http://${JuiceShopLoadBalancer.DNSName}"
         Export:
             Name: !Sub "${AWS::StackName}-LoadBalancerURL"
     
+    CloudFrontURL:
+        Description: Juice Shop URL (Via CDN - Secure)
+        Value: !Sub "https://${JuiceShopCDNDistribution.DomainName}"
+        Export:
+            Name: !Sub "${AWS::StackName}-CloudFrontURL"
+
     S3BucketName:
         Description: S3 Bucket for storage
-        Value: !Ref MyS3Bucket
+        Value: !Ref JuiceShopS3Bucket
     
     DebugInfo:
         Description: SSH into instance and check logs
